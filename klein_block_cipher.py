@@ -19,11 +19,29 @@
 from claasp.cipher import Cipher
 from claasp.utils.utils import get_ith_word
 from claasp.DTOs.component_state import ComponentState
-from claasp.name_mappings import INPUT_PLAINTEXT, INPUT_KEY
+from claasp.name_mappings import INPUT_PLAINTEXT, INPUT_KEY,KEY_SCHEDULE_ALGORITHM
 
 input_types = [INPUT_KEY, INPUT_PLAINTEXT]
 PARAMETERS_CONFIGURATION_LIST = [{'block_bit_size': 64, 'key_bit_size': 64, 'number_of_rounds': 12}]
 
+def update_key_schedule(cipher, k, i,key_bit_size,SBOX):
+        long = key_bit_size//2
+        rot_k_1 = cipher.add_rotate_component([k],[list(range(long))],long,-8).id
+        rot_k_2 = cipher.add_rotate_component([k],[list(range(long,key_bit_size))],long,-8).id
+        xor0 = cipher.add_XOR_component([rot_k_1, rot_k_2], [list(range(long))]+[list(range(long))], long).id
+        const = cipher.add_constant_component(8,i).id
+        xor1 = cipher.add_XOR_component([rot_k_2,const],[list(range(16,24))]+[list(range(8))],8).id
+        s0 = cipher.add_SBOX_component([xor0], [list(range(8,12))], 4, SBOX).id  #
+        s1 = cipher.add_SBOX_component([xor0], [list(range(12,16))], 4, SBOX).id  #
+        s2 = cipher.add_SBOX_component([xor0], [list(range(16,20))], 4, SBOX).id  #
+        s3 = cipher.add_SBOX_component([xor0], [list(range(20,24))], 4, SBOX).id  #
+
+        updated_key = cipher.add_intermediate_output_component([rot_k_2,xor1,rot_k_2,xor0,s0,s1,s2,s3,xor0],
+                                                             [list(range(16)),list(range(8)),list(range(24,long)),
+                                                              list(range(8)),list(range(4)),list(range(4)),
+                                                                        list(range(4)),list(range(4)),list(range(24,long))], key_bit_size, 'updated_key')
+
+        return updated_key.id
 
 class KleinBlockCipher(Cipher):
     """
@@ -89,15 +107,16 @@ class KleinBlockCipher(Cipher):
         xor0 = self.add_XOR_component([rot_k_1, rot_k_2], [list(range(long))]+[list(range(long))], long).id
         const = self.add_constant_component(8,i).id
         xor1 = self.add_XOR_component([rot_k_2,const],[list(range(16,24))]+[list(range(8))],8).id
-        left = self.add_concatenate_component([rot_k_2,xor1,rot_k_2],[list(range(16)),list(range(8)),list(range(24,long))],long).id
         s0 = self.add_SBOX_component([xor0], [list(range(8,12))], 4, self.SBOX).id  #
         s1 = self.add_SBOX_component([xor0], [list(range(12,16))], 4, self.SBOX).id  #
         s2 = self.add_SBOX_component([xor0], [list(range(16,20))], 4, self.SBOX).id  #
         s3 = self.add_SBOX_component([xor0], [list(range(20,24))], 4, self.SBOX).id  #
-        right = self.add_concatenate_component([xor0,s0,s1,s2,s3,xor0],[list(range(8)),list(range(4)),list(range(4)),
-                                                                        list(range(4)),list(range(4)),list(range(24,long))],long).id
-        updated_key = self.add_intermediate_output_component([left,right],
-                                                             [list(range(long)),list(range(long))], self.key_bit_size, 'updated_key')
+
+        updated_key = self.add_intermediate_output_component([rot_k_2,xor1,rot_k_2,xor0,s0,s1,s2,s3,xor0],
+                                                             [list(range(16)),list(range(8)),list(range(24,long)),
+                                                              list(range(8)),list(range(4)),list(range(4)),
+                                                                        list(range(4)),list(range(4)),list(range(24,long))], self.key_bit_size, 'updated_key')
+
         return updated_key.id
 
     def round_function(self, x, k):
@@ -115,3 +134,28 @@ class KleinBlockCipher(Cipher):
         round_output = self.add_round_output_component([mix_columns_1, mix_columns_2], [list(range(32)), list(range(32))], 64).id
         return round_output
     
+    def key_schedule(self,number_of_rounds=12 ):
+        key = INPUT_KEY
+        key_schedule_algorithm = Cipher(f"{self.id}{KEY_SCHEDULE_ALGORITHM}", f"{self.type}", 
+                                        ['key'], [self.key_bit_size], self.key_bit_size)
+
+        if(number_of_rounds>12):
+            if (self.key_bit_size==64): 
+                raise ValueError("number_of_rounds incorrect (should be less then or equal to 12)")
+            elif (self.key_bit_size==80 and number_of_rounds>16):   
+                raise ValueError("number_of_rounds incorrect (should be less then or equal to 16)")
+            elif (self.key_bit_size==96 and number_of_rounds>20):   
+                raise ValueError("number_of_rounds incorrect (should be less then or equal to 20)")
+        
+        for round_i in range(1, number_of_rounds + 1):
+            key_schedule_algorithm.add_round()
+            round_key = key_schedule_algorithm.add_round_key_output_component([key], [list(range(64))], 64).id  #
+            key = update_key_schedule(key_schedule_algorithm,key, round_i,self.key_bit_size,self.SBOX)
+
+        round_key = key_schedule_algorithm.add_round_key_output_component([key], [list(range(64))], 64).id
+        key_schedule_algorithm.add_cipher_output_component([round_key], [list(range(64))], 64)
+        return key_schedule_algorithm
+    
+    
+
+
