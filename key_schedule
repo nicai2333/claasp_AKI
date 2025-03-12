@@ -43,14 +43,17 @@ def key_schedule_algorithm(self):
     
     def key_schedule_inverse(self):
         key_size = self.inputs_size_to_dict()['key']
-        key_schedule_instance = Cipher(f"{self.id}{KEY_SCHEDULE_ALGORITHM}", f"{self.type}", ['key'], 
-                                       [key_size], self.inputs_size_to_dict()['key'])
+        key_schedule_instance = Cipher(f"{self.id}{KEY_SCHEDULE_ALGORITHM}", f"{self.type}", [], 
+                                       [], self.inputs_size_to_dict()['key'])
+
         key_schedule_component_ids = self.get_all_components_ids()
 
         inverted_KSA_components = []
         cipher_components_tmp = get_cipher_components(self)
         available_bits = []
         all_equivalent_bits = get_all_equivalent_bits(self)
+        x = 0 
+        y = 0
         while len(cipher_components_tmp) > 0:
             # print(len(cipher_components_tmp))
             number_of_unprocessed_components = 0
@@ -60,6 +63,10 @@ def key_schedule_algorithm(self):
                 if are_there_enough_available_inputs_to_evaluate_component(c, available_bits, all_equivalent_bits,
                                                                            key_schedule_component_ids, self):
                     # print("--------> evaluated")
+                    # print("y=",y)
+                    # y+=1
+                    # print(c)
+                    # print()
                     inverted_component = evaluated_component(c, available_bits, key_schedule_component_ids,
                                                              all_equivalent_bits, self)
                     update_available_bits_with_component_output_bits(c, available_bits, self)
@@ -71,6 +78,7 @@ def key_schedule_algorithm(self):
                                                                                                                      all_equivalent_bits,
                                                                                                                      self)) or (
                         c.type == CIPHER_INPUT and (c.description[0] == INPUT_KEY or c.description[0] == INPUT_TWEAK)):
+            
                     # print("--------> inverted")
                     inverted_component = component_inverse(c, available_bits, all_equivalent_bits,
                                                            key_schedule_component_ids, self)
@@ -85,14 +93,17 @@ def key_schedule_algorithm(self):
 
                         # STEP 3 - rebuild cipher
         print(inverted_KSA_components)
+        print()
         for _ in range(self.number_of_rounds):
             key_schedule_instance.add_round()
         for component in inverted_KSA_components:
-            print(component)
             if component.type == CIPHER_INPUT:
+                print(component)
+                print(component.id)
+                print(key_schedule_instance.inputs)
                 key_schedule_instance.inputs.append(component.id)
                 key_schedule_instance.inputs_bit_size.append(component.output_bit_size)
-            elif component.type == CIPHER_OUTPUT:
+            elif component.type == CIPHER_OUTPUT and component.id != key:
                 key_schedule_instance._rounds.round_at(self.number_of_rounds - 1)._components.append(component)
             else:
                 key_schedule_instance._rounds.round_at(self.number_of_rounds - 1 - component.round)._components.append(
@@ -100,4 +111,5 @@ def key_schedule_algorithm(self):
 
         sorted_inverted_cipher = sort_cipher_graph(key_schedule_instance)
 
-        return sorted_inverted_cipher
+        return sorted_inverted_cipher,inverted_KSA_components
+
