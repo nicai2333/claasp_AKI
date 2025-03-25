@@ -18,16 +18,20 @@ def get_cipher_components(self):
     # 增加代表输入的key或者plaintext的组件
     component_list = self.get_all_components()
     for c in component_list:
-        setattr(c, 'round', int(c.id.split("_")[-2]))
+        if c.id == 'key':
+            setattr(c, 'round', -1)
+        else:
+            setattr(c, 'round', int(c.id.split("_")[-2]))
     # build input components
     for index, input_id in enumerate(self.inputs):
-        if INPUT_KEY in input_id:
-            input_component = Component(input_id, "cipher_input", Input(0, [[]], [[]]), self.inputs_bit_size[index],
-                                        [INPUT_KEY])
-        else:
-            input_component = Component(input_id, "cipher_input", Input(0, [[]], [[]]), self.inputs_bit_size[index], [input_id])
-        setattr(input_component, 'round', -1)
-        component_list.append(input_component)
+        if 'key' not in self.get_all_components_ids():
+            if INPUT_KEY in input_id:
+                input_component = Component(input_id, "cipher_input", Input(0, [[]], [[]]), self.inputs_bit_size[index],
+                                            [INPUT_KEY])
+            else:
+                input_component = Component(input_id, "cipher_input", Input(0, [[]], [[]]), self.inputs_bit_size[index], [input_id])
+            setattr(input_component, 'round', -1)
+            component_list.append(input_component)
     return component_list
 
 def get_all_components_with_the_same_input_id_link_and_input_bit_positions(input_id_link, input_bit_positions, self):
@@ -173,21 +177,42 @@ def is_bit_adjacent_to_list_of_bits(bit_name, list_of_bit_names, all_equivalent_
 
 def equivalent_bits_in_common(bits_of_an_output_component, component_bits, all_equivalent_bits):  
     bits_in_common = []
+    n=0
     for bit1 in bits_of_an_output_component:
         bit_name1 = bit1["component_id"] + "_" + str(bit1["position"]) + "_" + bit1["type"]
+        # print("bit_name1:",bit_name1)
         if bit_name1 not in all_equivalent_bits.keys():
+            print("no equivalent:",1)
             return []
+        # n = 0
+        if bit1["component_id"]=='xor_1_32':
+                if n == 0 :
+                    print(bit_name1)
+                    n+=1
+                    print(all_equivalent_bits[bit_name1])
+        # if bit1["component_id"]=='xor_2_30':
+        #         if n == 0 :
+        #             print(bit_name1)
+        #             n+=1
+        #         print(all_equivalent_bits[bit_name1])
         for bit2 in component_bits:
             bit_name2 = bit2["component_id"] + "_" + str(bit2["position"]) + "_" + bit2["type"]
+            # print("bit_name2:",bit_name2)
+            # if n==0: 
+            #     print("equivalent_bits:",bit_name1,bit_name2)
+            #     n+=1
             if bit_name2 in all_equivalent_bits[bit_name1]:
                 bits_in_common.append(bit1)
                 break
+    print("no equivalent:",2)
+    # print("len(bits_in_common):",len(bits_in_common))
     return bits_in_common  #返回bits_of_an_output_component中，能够与component_bits中的值相互等价的，bit值
 
 def compute_input_id_links_and_input_bit_positions_for_inverse_component_from_available_output_components(component,
                                                                                                           available_output_components,
                                                                                                           all_equivalent_bits,
                                                                                                           self, KSA=False):
+    #available_output_components是component的可用输出组件
     tmp_input_id_links = []
     tmp_input_bit_positions = []
     # print(component.output_bit_size)
@@ -198,10 +223,11 @@ def compute_input_id_links_and_input_bit_positions_for_inverse_component_from_av
         bit_name_input = component.id + "_" + str(bit_position) + "_output"
         flag_link_found = False
         for c in available_output_components:
+            # print("available_output_components_id:",c.id)
             if is_possibly_invertible_component(c):
                 starting_bit_position = 0
                 l = []   #按照input_id_links，记录c中哪一段的bits_position是由component输入的
-                for index, link in enumerate(c.input_id_links):  #l排序保存不同output_component中,component相关的bit_position
+                for index, link in enumerate(c.input_id_links):  #l存储输出组件中，原组件输入进输出组件的比特位置
                     if link == component.id:    
                         l += list(range(starting_bit_position, starting_bit_position + len(c.input_bit_positions[index])))
                     starting_bit_position += len(c.input_bit_positions[index])
@@ -209,17 +235,23 @@ def compute_input_id_links_and_input_bit_positions_for_inverse_component_from_av
                 # print("l:",l)
                 for i in l:                                              #先因为c的输入比特和component的输出比特存在等价关系，
                     bit_name = c.id + "_" + str(i) + "_input"            #再判断c的输出output_updated和component的输出比特是否有等价关系
-                    if is_bit_adjacent_to_list_of_bits(bit_name_input, [bit_name], all_equivalent_bits): #建立component的输出比特和c的输出比特之间的等价关系
-                        # print(i)
+                    if is_bit_adjacent_to_list_of_bits(bit_name_input, [bit_name], all_equivalent_bits): #判断原组件的输出比特和输出组件的输入比特是否存在等价关系
+                        # print(1)
                         if c.input_bit_size == c.output_bit_size:
                             bit_name_output_updated = c.id + "_" + str(i) + "_output_updated"   
                             if is_bit_adjacent_to_list_of_bits(bit_name, [bit_name_output_updated],
                                                                all_equivalent_bits):
+                                #判断输出组件相同位置的input_bit和output_updated_bit之间是否存在等价关系
                                 tmp_input_id_links.append(c.id)
                                 tmp_input_bit_positions.append(i)
                                 flag_link_found = True
+                                #input_bit和output_updated_bit之间的等价关系是由函数update_output_bits决定的
+                                #经过函数component_inverse得到的逆组件，input和output_updated之间建立等价关系
+                                #if条件相当于判断组件c是否是由函数component_inverse得到的组件
+                                #如果if成立，则表示原组件的输出比特和输出组件的output_updated比特存在等价关系，将输出组件加入input_id_links候选
                                 break
                         else:
+                            # print(2)
                             for j in range(c.output_bit_size):
                                 bit_name_output_updated = c.id + "_" + str(j) + "_output_updated"
                                 if is_bit_adjacent_to_list_of_bits(bit_name, [bit_name_output_updated],
@@ -227,6 +259,7 @@ def compute_input_id_links_and_input_bit_positions_for_inverse_component_from_av
                                     tmp_input_id_links.append(c.id)
                                     tmp_input_bit_positions.append(j)
                                     flag_link_found = True
+                                    #判断输出组件第i位的input_bit和输出组件第j位的output_updated_bit之间是否存在等价关系
                                     break
                             if flag_link_found:
                                 break
@@ -235,6 +268,8 @@ def compute_input_id_links_and_input_bit_positions_for_inverse_component_from_av
 
     input_id_links = []                 #按照tmp_input_id_links,构建相关的input_id_links, input_bit_positions
     input_bit_positions = []
+    # print(component.id)
+    # print(tmp_input_id_links)
     pivot = tmp_input_id_links[0]
     input_bit_position_of_pivot = []
     input_id_links.append(pivot)
@@ -248,6 +283,7 @@ def compute_input_id_links_and_input_bit_positions_for_inverse_component_from_av
             input_bit_position_of_pivot = []
             input_bit_position_of_pivot.append(tmp_input_bit_positions[index])
     input_bit_positions.append(input_bit_position_of_pivot)
+    #根据available_output_component，找到可用于求逆的输出组件和输出组件的序列
 
     return input_id_links, input_bit_positions
 
@@ -397,8 +433,9 @@ def get_all_equivalent_bits(self):
 
 def get_equivalent_input_bit_from_output_bit(potential_unwanted_component, base_component, available_bits, all_equivalent_bits, 
                                              key_schedule_components, self, KSA=False):
+    #potential_unwanted_component是base_component的输入组件
     if KSA == False:
-        all_bit_names = get_all_bit_names(self)   #all_bit_names包含了所有组件的输入输出bit
+        all_bit_names = get_all_bit_names(self)   #遍历所有组件，all_bit_names包含了每个组件的input_bit以及其输入组件的output_bit
     else :                                        #以及除了cipher_output组件之外的其他组件的output_updated比特
         all_bit_names = get_all_bit_names_KSA(self)
     potential_unwanted_bits = []
@@ -483,13 +520,15 @@ def compute_input_id_links_and_input_bit_positions_for_inverse_component_from_in
             if not is_bit_contained_in(bit, available_bits):
                 component_available = False
                 break
+            #只要存在一个不可用的输入组件的输入bit就跳出循环，当前输入组件not_available
         # print("component_available:",component_available)
+        # print("component_link_id:",component.input_id_links[i])
         if component_available:
             potential_unwanted_component = get_component_from_id(component.input_id_links[i], self)
             equivalent_component, input_bit_positions_of_equivalent_component = get_equivalent_input_bit_from_output_bit(
                 potential_unwanted_component, component, available_bits, all_equivalent_bits, key_schedule_components,
                 self,KSA)
-            # print("equivalent_component:",equivalent_component)
+            print("equivalent_component:",equivalent_component)
             if KSA==True and isinstance(equivalent_component, list):
                 input_id_links = equivalent_component
                 input_bit_positions = input_bit_positions_of_equivalent_component
@@ -511,9 +550,9 @@ def component_input_bits(component):         #将组件component的输入比特,
         for position in component.input_bit_positions[index]:
             tmp.append(
                 {
-                    "component_id": link,
-                    "position": position,
-                    "type": "output_updated"
+                    "component_id": link,       #表示输入组件输入到原组件的比特
+                    "position": position,       #将原组件取逆之后，这些比特将会成为输入组件的输入比特
+                    "type": "output_updated"    #
                 }
             )
         component_input_bits_list.append(tmp)
@@ -586,19 +625,20 @@ def are_there_enough_available_inputs_to_evaluate_component(component, available
     can_be_evaluated = [True] * len(component_input_bits_list)
     available_output_components = []
     if component.type in [CONSTANT, CIPHER_INPUT]:
-        # print("False1")
+        print("False1")
         return False
     for index, bits_list in enumerate(component_input_bits_list):
         if not are_these_bits_available(bits_list, available_bits):
             can_be_evaluated[index] = False
+        # print(can_be_evaluated[index])
     available_input_components = [get_component_from_id(c_id, self) for i,c_id in enumerate(component.input_id_links) if can_be_evaluated[i] == True]
     #保存component所有可用的输入组件的id
 
-    if sum(can_be_evaluated) == len(can_be_evaluated):
-        # print("True1")
+    if sum(can_be_evaluated) == len(can_be_evaluated):  #如果所有的输入组件和输入bit都available，则该组件能够被等价
+        print("True1")
         # print(component.id)
         return True
-    else:
+    else:  #无法只依靠输入组件来将组件变得等价
         #将component的输入组件link的output_bit，与link的输出组件output_component的output_updated_bit，尝试找出其中的等价关系
         #如果存在等价关系，则将output_component加入available_output_components中。
         for index, link in enumerate(component.input_id_links):
@@ -609,43 +649,49 @@ def are_there_enough_available_inputs_to_evaluate_component(component, available
                 link_bit_names = []
                 for bit in component_input_bits_list[index]:  #将component输入组件的output_updated改成output，也就是component_of_link
                     link_bit_name = bit["component_id"] + "_" + str(bit["position"]) + "_output"  
+                    # print(link_bit_name)
                     link_bit_names.append(link_bit_name)
                 for index_output_comp, output_component in enumerate(output_components):
                     if (output_component.id not in component.input_id_links) and (
                             output_component.id != component.id):
+                        # print(output_component.id)
                         index_id = output_component.input_id_links.index(link)  #output_component的输入中,link在第几位
                         starting_bit = 0
                         for index_list, list_bit_positions in enumerate(output_component.input_bit_positions):
                             if index_list == index_id:
                                 break
-                            starting_bit += len(list_bit_positions)  #计算link的输入bit在output_component输入中的位置
+                            if starting_bit + len(list_bit_positions) < output_component.output_bit_size:
+                                starting_bit += len(list_bit_positions)  #计算link的输入bit在output_component输入中的开始位置
                         output_component_bit_name = output_component.id + "_" + str(starting_bit) + "_output_updated"
+                        # print(output_component_bit_name)
                         if is_bit_adjacent_to_list_of_bits(output_component_bit_name, link_bit_names,
                                                            all_equivalent_bits):
+                            #link的输出比特，在equivalent_bits中，能够与output_component_bit_name等价
                             # can_be_evaluated[index] = True
                             available_output_components.append(output_component)
 
         list_of_bit_names = []  #假如output_updated_bit和output_bit之间存在等价关系，则当input_bit和output_updated_bit存在关系，则可以间接推导出output
         for c in available_output_components:
             for i in range(c.output_bit_size):
-                list_of_bit_names.append(c.id + "_" + str(i) + "_output_updated")
+                list_of_bit_names.append(c.id + "_" + str(i) + "_output_updated")  #用于替换link的输出
         for c in available_input_components:
             for i in range(c.output_bit_size):
                 list_of_bit_names.append(c.id + "_" + str(i) + "_output")
         for i in range(component.input_bit_size):
             bit_name = component.id + "_" + str(i) + "_input"
             if not is_bit_adjacent_to_list_of_bits(bit_name, list_of_bit_names, all_equivalent_bits):
-                # print("False2")
+                print("False2")
                 return False
-        # print("True2")
+        print("True2")
         return True
+    #当输入组件的available_bit不够用时，转而使用输入组件link的其他输出组件ouput_component，用他来代替缺失的输入组件的available_bit
 
 
 def _get_successor_components(component_id, cipher):   #判断该组件是否还有后继,也就是是否是最后一个组件
     graph_cipher = create_networkx_graph_from_input_ids(cipher)
     return list(graph_cipher.successors(component_id))
 
-def are_there_enough_available_inputs_to_perform_inversion(component, available_bits, all_equivalent_bits, self,KSA=False):
+def are_there_enough_available_inputs_to_perform_inversion(component, available_bits, all_equivalent_bits, self, KSA=False):
     """
     NOTE: it assumes that the component input size is a multiple of the output size
     """
@@ -666,20 +712,29 @@ def are_there_enough_available_inputs_to_perform_inversion(component, available_
     component_output_bits_list = []
     for i in range(component.output_bit_size):
         component_output_bits_list.append({"component_id" : component.id, "position" : i, "type" : "output"})
+    # if(component.id =='xor_0_35'):print(component_output_bits_list)
     bit_lists_link_to_component_from_output_and_available = []
     for bit_list in bit_lists_link_to_component_from_output:
+        print("bit_list_id:",bit_list[0]["component_id"],len(bit_list))
         bits_in_common = equivalent_bits_in_common(bit_list, component_output_bits_list, all_equivalent_bits)
+        # print("bits_in_common:",bits_in_common)
         #返回bit_list中，能够与component_output_bits_list中的值相互等价的，bit值
+        #返回输出组件的output_updated_bit中，能够与当前组件的output_bit相互等价的bit
+        # print("bit_list_id:",bit_list[0]["component_id"],len(bit_list),"bits_in_common==[]",bits_in_common==[])
+        # if(component.id == 'xor_0_35'): print(bits_in_common)
         for bit in bits_in_common:
             if bit in available_bits:
                 bit_lists_link_to_component_from_output_and_available.append(bit)  
                 #返回component中，可用的输出bit，并且和输出组件的output_updated存在等价关系
+        
+    print("len(bit_lists_link_to_component_from_output_and_available):",len(bit_lists_link_to_component_from_output_and_available))
 
     # handling available bits from inputs
-    bit_lists_link_to_component_from_input = component_input_bits(component)     #获得当前组件c的所有输入组件的输入位置bit序列以及对应的output_updated_bit值
-    if bit_lists_link_to_component_from_input==[]:
-        for i in range(len(bit_lists_link_to_component_from_input)):
-            print(bit_lists_link_to_component_from_input[i][0])
+    bit_lists_link_to_component_from_input = component_input_bits(component)
+    #获得当前组件c的所有输入组件的输入位置bit序列以及对应的output_updated_bit值
+    # if bit_lists_link_to_component_from_input==[]:
+    #     for i in range(len(bit_lists_link_to_component_from_input)):
+    #         print(bit_lists_link_to_component_from_input[i][0])
     # if component.id == 'xor_2_29': 
     #     print(bit_lists_link_to_component_from_input)
     can_be_used_for_inversion = [True] * len(bit_lists_link_to_component_from_input)
@@ -691,10 +746,10 @@ def are_there_enough_available_inputs_to_perform_inversion(component, available_
     # if component.id == 'xor_2_29': 
     #     print(can_be_used_for_inversion[0],can_be_used_for_inversion[1])
     for index, link in enumerate(component.input_id_links):
-        # print("link:",link)
+        print("link:",link)
         if not can_be_used_for_inversion[index]:
             component_of_link = get_component_from_id(link, self)
-            print("component_of_link:",component_of_link.id)
+            # print("component_of_link:",component_of_link.id)
             output_components = get_output_components(component_of_link, self)    #output_components包含component,但不只是component
             link_bit_names = []
             for bit in bit_lists_link_to_component_from_input[index]:
@@ -704,6 +759,9 @@ def are_there_enough_available_inputs_to_perform_inversion(component, available_
                 nb_available_output_component_bits = 0
                 if (output_component.id not in component.input_id_links) and (
                         output_component.id != component.id) and (output_component.type != INTERMEDIATE_OUTPUT):
+                    # if component.id == 'xor_2_28':print('xor_2_28 output_componrnt_id:',output_component.id,'xor_2_28 link_id:',link)
+                    # if component.id == 'xor_1_33':print('xor_1_33 output_componrnt_id:',output_component.id,'xor_1_33 link_id:',link)
+                    # if component.id == 'xor_0_35':print('xor_0_35 output_componrnt_id:',output_component.id,'xor_0_35 link_id:',link)
                     for i in range(output_component.output_bit_size):
                         output_component_bit_name = output_component.id + "_" + str(i) + "_output_updated" #构建link和component其他输出组件之间的关系
                         output_component_bit = {"component_id": output_component.id, "position": i, "type": "output_updated"}
@@ -711,13 +769,15 @@ def are_there_enough_available_inputs_to_perform_inversion(component, available_
                             nb_available_output_component_bits += 1    #如果output_component_bit和link_bit的bit存在等价关系,并且可用,那么+1
                     # print(output_component.id,nb_available_output_component_bits)
                     # print()
+                    # print("nb_available_output_component_bits:",nb_available_output_component_bits)
                     if nb_available_output_component_bits == output_component.output_bit_size:
                         can_be_used_for_inversion[index] = True
-                    elif nb_available_output_component_bits == component_of_link.output_bit_size and KSA==True:  
+                    elif nb_available_output_component_bits == component_of_link.output_bit_size and KSA==True:
                         can_be_used_for_inversion[index]= True
 
     for index, bits_list in enumerate(bit_lists_link_to_component_from_input):
         print("can_be_used_for_inversion:",can_be_used_for_inversion[index])
+    print()
 
     # if component.id == 'xor_2_29': 
     #     print(can_be_used_for_inversion[0],can_be_used_for_inversion[1])
@@ -733,6 +793,8 @@ def are_there_enough_available_inputs_to_perform_inversion(component, available_
     if component.id == INPUT_PLAINTEXT or INTERMEDIATE_OUTPUT in component.id:
         return len(bit_lists_link_to_component_from_input_and_output) >= component.output_bit_size
     else:
+        # print("component.input_bit_size:",component.input_bit_size)
+        # print("len(bit_lists_link_to_component_from_input_and_output):",len(bit_lists_link_to_component_from_input_and_output))
         return len(bit_lists_link_to_component_from_input_and_output) >= component.input_bit_size
 
 def is_possibly_invertible_component(component):  #从分类上看component是否可逆
@@ -775,10 +837,12 @@ def is_possibly_invertible_component(component):  #从分类上看component是�
     return is_invertible
 
 def is_intersection_of_input_id_links_null(inverse_component, component):
+    #判断原组件和逆组件的input_id_links交集是否为空
     flag_intersection_null = True
     for input_id_link in component.input_id_links:
         if input_id_link in inverse_component.input_id_links:
             flag_intersection_null = False
+            #如果原组件和逆组件拥有同样的输入组件，则flag为false
     if flag_intersection_null:
         return True, []
 
@@ -791,24 +855,66 @@ def is_intersection_of_input_id_links_null(inverse_component, component):
         if input_id_link not in inverse_component.input_id_links:
             input_bit_positions += range(starting_bit_position, starting_bit_position + len(component.input_bit_positions[index]))
         starting_bit_position += len(component.input_bit_positions[index])
+    #返回的input_bit_position为component中，与inverse_component不同的input_id_links的输入位置
     return False, input_bit_positions
 
-def find_input_id_link_bits_equivalent(inverse_component, component, all_equivalent_bits):
+def find_input_id_link_bits_equivalent(inverse_component, component, all_equivalent_bits,available_bits,KSA=False):
+    #默认component和inverse_component相同位置的input_id_link是存在关系的，
+    #但是两个组件的input_id_links数量并不一定相等，因此上述情景是否成立存疑
+    #component的input_id_link数量是基本上小于inverse_component的input_id_links数量的
     starting_bit_position = 0
     for index, input_id_link in enumerate(component.input_id_links):
+        if component.id =='xor_1_33':
+            print("input_id_links:",component.input_id_links)
+            print("inverse_input_id_links:",inverse_component.input_id_links)
+        if component.id =='xor_2_28':
+            print("input_id_links:",component.input_id_links)
+            print("inverse_input_id_links:",inverse_component.input_id_links)            
         input_bit_positions_of_inverse = inverse_component.input_bit_positions[index]
         for position, i in enumerate(component.input_bit_positions[index]):
+            print("starting_bit_position:",starting_bit_position)
+            # print("num")
             input_bit_name = input_id_link + "_" + str(i) + "_output"
+            #逆组件的input_id_link可能是原组件的输出，也可能原组件的输入组件的其他输出组件，还有可能是原组件的输入组件的output_bit的等价bit序列
             potential_equivalent_bit_name = inverse_component.input_id_links[index] + "_" + str(
                 input_bit_positions_of_inverse[position]) + "_input"
-            if input_bit_name not in all_equivalent_bits[potential_equivalent_bit_name]:  #存在等价关系,但是并不在all_equivalent_bits里
+            if input_bit_name not in all_equivalent_bits[potential_equivalent_bit_name] and KSA == False:  
                 input_bit_positions = list(
                     range(starting_bit_position, starting_bit_position + len(component.input_bit_positions[index])))
                 return input_bit_positions
+            elif input_bit_name not in all_equivalent_bits[potential_equivalent_bit_name] and KSA == True:
+
+                flag = False
+                input_bit_positions = list(
+                    range(starting_bit_position, starting_bit_position + len(component.input_bit_positions[index])))
+
+                input_bit_name = component.id + "_" + str(input_bit_positions[0]) + "_input"
+                # print(potential_equivalent_bit_name)
+                # if (potential_equivalent_bit_name == 'xor_2_27_0_input'): print(all_equivalent_bits["xor_2_27_32_input"])
+                # print( potential_equivalent_bit_name in all_equivalent_bits.keys())
+                # print(all_equivalent_bits[potential_equivalent_bit_name])
+                for ind,ele in enumerate(all_equivalent_bits[input_bit_name]):
+                    
+                    partial = ele.split('_')
+                    if partial[-1]=='updated' and partial[-2] == 'output' and partial[0] !='intermediate':
+                        flag = True
+                print("flag:",flag)
+                if flag == False:
+                    print("starting_bit_position:",starting_bit_position)
+                    input_bit_positions = list(
+                    range(starting_bit_position, starting_bit_position + len(component.input_bit_positions[index])))
+                    return input_bit_positions
+                elif index==len(component.input_id_links)-1:
+                    input_bit_positions = list(
+                    range(starting_bit_position, starting_bit_position + len(component.input_bit_positions[index])))
+                    return input_bit_positions
+                else :
+                    break
         starting_bit_position += len(component.input_bit_positions[index])
     raise ValueError("Equivalent bits not found")
 
-def update_output_bits(inverse_component, self, all_equivalent_bits, available_bits):
+def update_output_bits(inverse_component, self, all_equivalent_bits, available_bits,KSA=False):
+    #将当前组件的output_updated_bit加入到availabel_bit中，同时在equivale_bit中添加等价关系
 
     def _add_output_bit_equivalences(id, bit_positions, component, all_equivalent_bits, available_bits):
         for i in range(component.output_bit_size):
@@ -820,8 +926,8 @@ def update_output_bits(inverse_component, self, all_equivalent_bits, available_b
             }
             available_bits.append(bit)
             input_bit_name = id + "_" + str(bit_positions[i]) + "_input"
-            all_equivalent_bits[input_bit_name].append(output_bit_name_updated)
-            if output_bit_name_updated not in all_equivalent_bits.keys():         #构建等价关系
+            all_equivalent_bits[input_bit_name].append(output_bit_name_updated)   #当前组件的output_updated_bit和input_bit构建等价关系
+            if output_bit_name_updated not in all_equivalent_bits.keys():         #不会设计到其他组件
                 all_equivalent_bits[output_bit_name_updated] = []
             all_equivalent_bits[output_bit_name_updated].append(input_bit_name)
             for name in all_equivalent_bits[input_bit_name]:
@@ -833,18 +939,21 @@ def update_output_bits(inverse_component, self, all_equivalent_bits, available_b
     component = get_component_from_id(id, self)
     flag_is_intersection_of_input_id_links_null, input_bit_positions = is_intersection_of_input_id_links_null(
         inverse_component, component)
+    #flag表示原组件和逆组件的input_id_links是否存在交集，input_bit_positions表示原组件中，与逆组件不同的input_id_links的输入位置
 
     if (component.description == [INPUT_KEY]) or (component.description == [INPUT_TWEAK]) or(component.type == CONSTANT):
+        #上述几个类型的component不存在evaluated_component，但是存在inverse_component
+        #这几个inverse_component与一般的evaluated_component类似，令output_bit和output_updated_bit相互等价
         for i in range(component.output_bit_size):   #如果component是key或者tweak或者constant,则将其相同位置的输入位和输出位设置为等价位
             output_bit_name_updated = id + "_" + str(i) + "_output_updated"
             bit = {
                 "component_id": id,
                 "position": i,
-                "type": "output_updated"
+                "type": "output_updated"    #key、tewakkey、常数不存在输入，因此没有input_bit
             }
             available_bits.append(bit)
             input_bit_name = id + "_" + str(i) + "_output"   #以output为输入,以output_updated为输出,此处使用逆组件的id,实际上就是原组件的id
-            if input_bit_name not in all_equivalent_bits.keys():
+            if input_bit_name not in all_equivalent_bits.keys(): #构建inverse_component的output_updated_bit和output_bit的等价关系
                 all_equivalent_bits[input_bit_name] = []
             all_equivalent_bits[input_bit_name].append(output_bit_name_updated)
             if output_bit_name_updated not in all_equivalent_bits.keys():
@@ -857,8 +966,12 @@ def update_output_bits(inverse_component, self, all_equivalent_bits, available_b
         _add_output_bit_equivalences(id, range(component.output_bit_size), component, all_equivalent_bits, available_bits)
     else:
         if flag_is_intersection_of_input_id_links_null:
-            input_bit_positions = find_input_id_link_bits_equivalent(inverse_component, component, all_equivalent_bits)
+            input_bit_positions = find_input_id_link_bits_equivalent(inverse_component, component, all_equivalent_bits,available_bits,KSA)
+            #input_bit_positions大小为component的output_bit_size
+            # if component.id == 'xor_1_34': print(input_bit_positions)
         _add_output_bit_equivalences(id, input_bit_positions, component, all_equivalent_bits, available_bits)
+        output_bit_name_updated = id + "_" + str(0) + "_output_updated"
+        print("id:",id,",",output_bit_name_updated,"equivalent_bits",all_equivalent_bits[output_bit_name_updated])
 
 def order_input_id_links_for_modadd(component, input_id_links, input_bit_positions, available_bits, self):
     available_output_components_with_indices = get_available_output_components(component, available_bits, self, True)
@@ -878,8 +991,10 @@ def component_inverse(component, available_bits, all_equivalent_bits, key_schedu
     """
     This functions assumes that the component is actually invertible.
     """
+    #组件求逆，但他的输入大小，输出大小以及id都是不变的
     output_components = get_output_components(component, self)  #component
     available_output_components = get_available_output_components(component, available_bits, self)
+    # print("num of available_output_components:",len(available_output_components))
     # if (available_output_components!=[]):
     #     for _ in range(len(available_output_components)):
     #         print("available_output_components:",(available_output_components[_].id))
@@ -957,19 +1072,21 @@ def component_inverse(component, available_bits, all_equivalent_bits, key_schedu
         #     print("len_of_available_output_components:",len(available_output_components))
         #     for i in range(len(available_output_components)):
         #         print("available_output_components:",available_output_components[i].id) 
-        tmp_output_components = output_components.copy()
+        tmp_output_components = available_output_components.copy()
+        # for i in range(len(available_output_components)):
+        #     print(available_output_components[i].id)
         flag = True
         while flag ==True : 
             flag = False
             input_id_links_from_output_components, input_bit_positions_from_output_components = compute_input_id_links_and_input_bit_positions_for_inverse_component_from_available_output_components(
             component, tmp_output_components, all_equivalent_bits, self , KSA = True)
-            print(input_id_links_from_output_components,input_bit_positions_from_output_components)
-        # print()
+            print("input_from_output:",input_id_links_from_output_components,input_bit_positions_from_output_components)
+            # print()
             input_id_links_from_input_components, input_bit_positions_from_input_components = compute_input_id_links_and_input_bit_positions_for_inverse_component_from_input_components(
             component, available_bits, all_equivalent_bits, key_schedule_components, self, KSA=True)
-            print(input_id_links_from_input_components,input_bit_positions_from_input_components)
+            print("input_from_input:",input_id_links_from_input_components,input_bit_positions_from_input_components)
 
-            for c in tmp_output_components:
+            for c in tmp_output_components:  #移除不可能的xor输入输出关系
                 # print(c.id)
                 if len(input_id_links_from_output_components)==1 and len(input_id_links_from_input_components)==1 :
                     part_input = input_id_links_from_input_components[0].split('_')
@@ -995,11 +1112,15 @@ def component_inverse(component, available_bits, all_equivalent_bits, key_schedu
                             # print(tmp_component_2)
                             for d in tmp_output_components:
                                 if d.id ==input_id_links_from_output_components[0]:
-                                    tmp_output_components.remove(d)
-                                    break
+                                    if len(tmp_output_components) > 1:
+                                        tmp_output_components.remove(d)
+                                        break
+                                    else :
+                                        flag = False
         # print()
         # print(input_id_links_from_input_components)
         # print(input_id_links_from_output_components)
+        print()
         input_id_links = input_id_links_from_input_components + input_id_links_from_output_components
         input_bit_positions = input_bit_positions_from_input_components + input_bit_positions_from_output_components
 
@@ -1010,7 +1131,7 @@ def component_inverse(component, available_bits, all_equivalent_bits, key_schedu
         inverse_component.__class__ = component.__class__
         # print(inverse_component.id,inverse_component.input_bit_positions,inverse_component.input_bit_size)
         setattr(inverse_component, "round", component.round)
-        update_output_bits(inverse_component, self, all_equivalent_bits, available_bits)
+        update_output_bits(inverse_component, self, all_equivalent_bits, available_bits,KSA)
     elif component.type == WORD_OPERATION and component.description[0] == "ROTATE":
         input_id_links, input_bit_positions = compute_input_id_links_and_input_bit_positions_for_inverse_component_from_available_output_components(component, available_output_components, all_equivalent_bits, self)
         inverse_component = Component(component.id, component.type,
@@ -1185,6 +1306,7 @@ def all_output_updated_bits_available(component, available_bits):
     return True
 
 def all_output_bits_available(component, available_bits):
+    #返回当前组件的所有输出output_updated是否都是available的
     for i in range(component.output_bit_size):
         bit = {
             "component_id": component.id,
@@ -1220,19 +1342,21 @@ def get_key_schedule_component_ids(self):
 
 
 def is_output_bits_updated_equivalent_to_input_bits(output_bits_updated_list, input_bits_list, all_equivalent_bits):
+    n =0
     for bit in output_bits_updated_list:
         if not is_bit_adjacent_to_list_of_bits(bit, input_bits_list, all_equivalent_bits):
             return False
     return True
+#是否输出比特的值都能够于输入比特相互等价
 
-def find_correct_order(id1, list1, id2, list2, all_equivalent_bits):
+def find_correct_order(id1, list1, id2, list2, component_output_bit_size, all_equivalent_bits):
     list2_ordered = []
     for i in list1:
         bit = id1 + "_" + str(i) + "_output"
         for j in list2:
             bit_potentially_equivalent = id2 + "_" + str(j) + "_input"
             if bit_potentially_equivalent in all_equivalent_bits[bit]:
-                list2_ordered.append(j)
+                list2_ordered.append(j%component_output_bit_size)
                 break
     return list2_ordered
 
@@ -1359,6 +1483,7 @@ def evaluated_component(component, available_bits, key_schedule_component_ids, a
             output_bits_updated_list = []
             for j in component.input_bit_positions[i]:
                 output_bit_updated_name = original_input_component.id + "_" + str(j) + "_output_updated"
+                #输入组件输入位置的output_updated序列
                 output_bits_updated_list.append(output_bit_updated_name)
             input_bits_list = []
             for k in range(starting_bit_position, starting_bit_position + len(component.input_bit_positions[i])):
@@ -1369,6 +1494,7 @@ def evaluated_component(component, available_bits, key_schedule_component_ids, a
             print("flag:",flag)
             # print(all_output_bits_available(original_input_component, available_bits))
             if all_output_bits_available(original_input_component, available_bits) and flag:
+                #输入组件的所有输出output_updated_bit都是可用的，并且输入组件的output_updated序列和原组件的输入序列是存在等价关系的
                 input_id_links.append(component.input_id_links[i])
                 input_bit_positions.append(component.input_bit_positions[i])
             else:
@@ -1384,17 +1510,22 @@ def evaluated_component(component, available_bits, key_schedule_component_ids, a
                         available_output_components):
                     if (available_output_component.id not in component.input_id_links) and (
                             available_output_component.id != component.id):
+                        # print("available_output_component.id:",available_output_component.id)
                         index_id_list = [_ for _, x in enumerate(available_output_component.input_id_links) if x == link and set(original_input_bit_positions_of_link) <= set(available_output_component.input_bit_positions[_])]
                         index_id = index_id_list[0] if index_id_list else available_output_component.input_id_links.index(link)
+                        # print("index_id_list:",index_id_list)
+                        # print(index_id)
                         starting_bit = 0
                         for index_list, list_bit_positions in enumerate(available_output_component.input_bit_positions):
                             if index_list == index_id:
                                 break
-                            starting_bit += len(list_bit_positions)
+                            if starting_bit + len(list_bit_positions) < available_output_component.output_bit_size:
+                                starting_bit += len(list_bit_positions)
                         available_output_component_bit_name = available_output_component.id + "_" + str(
                             starting_bit) + "_output_updated"  #满足if条件的所有available_output_component,与link相关的输入位的起始位置
-                        print("x:",is_bit_adjacent_to_list_of_bits(available_output_component_bit_name, link_bit_names,
-                                                           all_equivalent_bits))
+                        # print("available_output_component_bit_name:",available_output_component_bit_name)
+                        # print("x:",is_bit_adjacent_to_list_of_bits(available_output_component_bit_name, link_bit_names,
+                        #                                    all_equivalent_bits))
                         if is_bit_adjacent_to_list_of_bits(available_output_component_bit_name, link_bit_names,
                                                            all_equivalent_bits):
                             # if all_input_bits_available(c, available_bits):
@@ -1403,14 +1534,22 @@ def evaluated_component(component, available_bits, key_schedule_component_ids, a
                             accumulator = 0 # changed
                             for j in range(len(available_output_component.input_id_links)):
                                 if j == index_id:
-                                    if set(original_input_bit_positions_of_link) < set(available_output_component.input_bit_positions[j]):
+                                    print("set(original_input_bit_positions_of_link):",original_input_bit_positions_of_link)
+                                    print("set(available_output_component.input_bit_positions[j]):",available_output_component.input_bit_positions[j])
+                                    if set(original_input_bit_positions_of_link) <= set(available_output_component.input_bit_positions[j]):
                                         accumulator += original_input_bit_positions_of_link[0] - available_output_component.input_bit_positions[j][0]
+                                        print("accumulator:",accumulator)
+                                    print(accumulator)
                                     l = [h for h in range(accumulator, accumulator + len(component.input_bit_positions[i]))]
-                                    l_ordered = find_correct_order(link, original_input_bit_positions_of_link, available_output_component.id, l, all_equivalent_bits)
+                                    print("l:",l)
+                                    l_ordered = find_correct_order(link, original_input_bit_positions_of_link, available_output_component.id, l, available_output_component.output_bit_size, all_equivalent_bits)
+                                    print(l_ordered)
                                     input_bit_positions.append(l_ordered)
                                     break
                                 else:
                                     accumulator += len(available_output_component.input_bit_positions[j]) # changed
+                                    # if accumulator + len(available_output_component.input_bit_positions[j])<available_output_component.output_bit_size:
+                                    #     accumulator += len(available_output_component.input_bit_positions[j]) # changed
     else:
         print(200)
         input_id_links = [[]]
@@ -1431,10 +1570,13 @@ def evaluated_component(component, available_bits, key_schedule_component_ids, a
         del input_id_links[index]
         del input_bit_positions[index]
 
+    #evaluted_component的input_id_links可能是原组件的input_id_links的一部分，也可能是link的其他输出组件
+
     evaluated_component = Component(component.id, component.type, Input(component.input_bit_size, input_id_links, input_bit_positions),
                                     component.output_bit_size, component.description)
     evaluated_component.__class__ = component.__class__
     setattr(evaluated_component, "round", getattr(component, "round"))
+    #evaluted_component相当于原组件，在input_id_links和input_bit_positions上发生改变，但是组件相关的功能并没有发生改变，如经过同一个S盒
 
     id = component.id
     for i in range(evaluated_component.output_bit_size):
@@ -1455,6 +1597,7 @@ def evaluated_component(component, available_bits, key_schedule_component_ids, a
         for name in all_equivalent_bits[output_bit_name]:
             if name != output_bit_name_updated:
                 all_equivalent_bits[output_bit_name_updated].append(name)
+        #将当前组件的output_updated_bit设置为available，并且在equivalent中，将output_updated_bit和output_bit构建等价关系
     # print(evaluated_component.description)
     # print(evaluated_component.id)
 
