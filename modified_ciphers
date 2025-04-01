@@ -562,7 +562,7 @@ class Cipher:
                                                                            key_schedule_component_ids, self):
                     # print("--------> evaluated")
                     # print(is_possibly_invertible_component(c))
-                    print("1:",c,",c.id:",c.id)
+                    # print("1:",c,",c.id:",c.id)
                     # print(are_there_enough_available_inputs_to_perform_inversion(c,available_bits,all_equivalent_bits,self))
                     inverted_component = evaluated_component(c, available_bits, key_schedule_component_ids,
                                                              all_equivalent_bits, self)
@@ -581,7 +581,7 @@ class Cipher:
                                                                                                                      self)) or (
                         c.type == CIPHER_INPUT and (c.description[0] == INPUT_KEY or c.description[0] == INPUT_TWEAK)):
                     # print("--------> inverted")
-                    print("2:",c,",id:",c.id)
+                    # print("2:",c,",id:",c.id)
 
                     inverted_component = component_inverse(c, available_bits, all_equivalent_bits,
                                                            key_schedule_component_ids, self)
@@ -626,8 +626,10 @@ class Cipher:
         key_schedule_instance = Cipher(f"{self.id}{KEY_SCHEDULE_ALGORITHM}", f"{self.type}", ['key'], 
                                        [key_size], key_size)
         key_schedule_component = []
-
         cipher_name = self.id.split('_')[0]
+        number_of_rounds = self.number_of_rounds
+        
+        if cipher_name == 'midori': number_of_rounds-=1
         if cipher_name == 'des':
             key_schedule_instance = Cipher(f"{self.id}{KEY_SCHEDULE_ALGORITHM}", f"{self.type}", ['key'], 
                                        [56], self.inputs_size_to_dict()['key'])
@@ -643,7 +645,24 @@ class Cipher:
                         key_schedule_component_ids.remove(id)
         
         for ids in key_schedule_component_ids:
+            # print(ids)
             if ids == 'key' : continue
+
+            if ids.split('_')[0] == 'intermediate' :
+                # print('x')
+                component = self.get_component_from_id(ids)
+                # print(component.description)
+                if (component.description[0] == 'round_key_output') :
+                    if (component.input_id_links[0].split('_')[0]=='intermediate') and (len(component.input_id_links)==1) :
+                        continue
+                    elif len(component.input_id_links)>1 :
+                        flag = True
+                        for i in range(len(component.input_id_links)-1):
+                            if component.input_id_links[i] != component.input_id_links[i+1]:
+                                flag = False
+                        if flag == True: 
+                            continue
+            
             component = self.get_component_from_id(ids)
 
             new_component = Component(component.id, component.type, Input(component.input_bit_size, 
@@ -651,27 +670,60 @@ class Cipher:
                                     component.output_bit_size, component.description)
             new_component.__class__ = component.__class__
             key_schedule_component.append(new_component)
-        print(key_schedule_component)
+        # print(key_schedule_component)
 
-        for _ in range(self.number_of_rounds):
+        for _ in range(number_of_rounds):
             key_schedule_instance.add_round()
         for components in key_schedule_component:
             round = int(find_first_number(components.id))
             key_schedule_instance._rounds.round_at(round)._components.append(components)
 
         id = key_schedule_instance.get_all_components_ids()[-1]
+        # print(id)
+        # print(number_of_rounds)
         input_id_link = key_schedule_instance.get_component_from_id(id).input_id_links
         input_bit_positions = key_schedule_instance.get_component_from_id(id).input_bit_positions
         output_bit_size = key_schedule_instance.get_component_from_id(id).output_bit_size
 
-        key_schedule_instance.remove_round_component_from_id(self.number_of_rounds-1,id)
+        
+        key_schedule_instance.remove_round_component_from_id(number_of_rounds-1,id)
        
         key_schedule_instance.add_cipher_output_component(input_id_link,input_bit_positions, output_bit_size)
         sorted_KSA = sort_cipher_graph(key_schedule_instance)
         return sorted_KSA
     
-    # def key_schedule_algorithm_re_order(self):
+    def reduce_key_schedule_algorithm_rounds(self,target_round_num):
+        # target_round_num = self.number_of_rounds - reduced_round_num 
+        key_schedule_instance = Cipher(f"{self.id}{REDUCED_KSA}", f"{self.type}", [self.inputs[0]], 
+                                       [self.inputs_bit_size[0]], self.inputs_bit_size[0])
+        tmp_ksa_component=[]
+        components = self.get_all_components()
+        for component in components:
+            if int(component.id.split('_')[-2])<target_round_num:
+                new_component = Component(component.id, component.type, Input(component.input_bit_size, 
+                                                                          component.input_id_links, component.input_bit_positions),
+                                    component.output_bit_size, component.description)
+                new_component.__class__ = component.__class__
+                tmp_ksa_component.append(new_component)
         
+        for _ in range(target_round_num):
+            # print(_)
+            key_schedule_instance.add_round()
+        for components in tmp_ksa_component:
+            # print(components.id)
+            round = int(components.id.split('_')[-2])
+            key_schedule_instance._rounds.round_at(round)._components.append(components)
+        
+        id = key_schedule_instance.get_all_components_ids()[-1]
+        input_id_link = key_schedule_instance.get_component_from_id(id).input_id_links
+        input_bit_positions = key_schedule_instance.get_component_from_id(id).input_bit_positions
+        output_bit_size = key_schedule_instance.get_component_from_id(id).output_bit_size
+
+        key_schedule_instance.remove_round_component_from_id(target_round_num-1,id)
+       
+        key_schedule_instance.add_cipher_output_component(input_id_link,input_bit_positions, output_bit_size)
+        sorted_KSA = sort_cipher_graph(key_schedule_instance)
+        return sorted_KSA
     
     def key_schedule_inverse(self):
         num_round = self.number_of_rounds
@@ -695,10 +747,10 @@ class Cipher:
             number_of_c = 0
 
             for c in cipher_component_2:
-                print("c.id:",c.id)
+                # print("c.id:",c.id)
                 if are_there_enough_available_inputs_to_evaluate_component(c, available_bits, all_equivalent_bits,
                                                                            key_schedule_component_ids, self):
-                    print("1:",c,",c.id:",c.id)
+                    # print("1:",c,",c.id:",c.id)
                     inverted_component = evaluated_component(c, available_bits, key_schedule_component_ids,
                                                              all_equivalent_bits, self,KSA=True)
                     update_available_bits_with_component_output_bits(c, available_bits, self)
@@ -716,12 +768,14 @@ class Cipher:
                         if number_of_unprocessed_components == len(cipher_component_2):
                             raise Error("Unable to invert cipher for now.")
                         continue
-                    print("2:",c,",id:",c.id)
-                    print()
+                    # print("2:",c,",id:",c.id)
+                    # print()
                     inverted_component = component_inverse(c, available_bits, all_equivalent_bits,
                                                            key_schedule_component_ids, self, KSA=True)
                     update_available_bits_with_component_input_bits(c, available_bits)
                     update_available_bits_with_component_output_bits(c, available_bits, self)
+                    # if c.id == 'xor_1_55': 
+                    #     print(all_equivalent_bits['xor_1_55_0_output_updated'])
                     inverted_KSA_components.append(inverted_component)
                     cipher_component.remove(c)
 
@@ -760,7 +814,7 @@ class Cipher:
             for index,component in enumerate(key_schedule_component):
                 if (component.type == SBOX) or (component.type == WORD_OPERATION and component.description[0]=="NOT"):
                     id = component.id
-                    print("id:",id)
+                    # print("id:",id)
                     output_components = get_output_components(component,self)
                     for c in output_components:
                         for index, link_component in enumerate(c.input_id_links):
@@ -790,22 +844,33 @@ class Cipher:
                 new_component.__class__ = component.__class__
                 setattr(new_component, "round", getattr(component, "round"))
                 corrlated_key_schedule_components.append(new_component)
-            elif (component.type == SBOX) or (component.type == WORD_OPERATION and component.description[0]=="NOT") and (
-                            cipher_type=='word'):
+            elif ((component.type == SBOX) or (component.type == WORD_OPERATION and component.description[0]=="NOT")) and (
+                cipher_type=='word') :
                 continue
-            elif component.type == SBOX and cipher_type=='bit':
-                size = component.input_bit_size
-                ele = 2**size -1
-                # print(2^size)
-                new_description = [ele for _ in range(size)]
-                new_description[0]=0
-                print(new_description)
+            elif (component.type == CONSTANT) and (cipher_type=='word'):
+                num = component.output_bit_size//4
+                new_description = ['0x'+'0'*num]
+                # print(new_description)
                 new_component = Component(component.id, component.type, Input(component.input_bit_size, 
                                                     component.input_id_links, component.input_bit_positions),
                                     component.output_bit_size, new_description)
                 new_component.__class__ = component.__class__
                 setattr(new_component, "round", getattr(component, "round"))
                 corrlated_key_schedule_components.append(new_component)
+            elif (component.type == SBOX) and (cipher_type=='bit'):
+                size = component.input_bit_size
+                ele = 2**size -1
+                # print(2^size)
+                new_description = [ele for _ in range(2**size)]
+                new_description[0]=0
+                # print(new_description)
+                new_component = Component(component.id, component.type, Input(component.input_bit_size, 
+                                                    component.input_id_links, component.input_bit_positions),
+                                    component.output_bit_size, new_description)
+                new_component.__class__ = component.__class__
+                setattr(new_component, "round", getattr(component, "round"))
+                corrlated_key_schedule_components.append(new_component)
+                # print(1000)
             elif component.type == WORD_OPERATION and (component.description[0]=="XOR" or component.description[0]=="MODADD" or
                                                        component.description[0]=="AND"):
                 new_description = component.description.copy()
@@ -837,67 +902,6 @@ class Cipher:
         sorted_inverted_cipher = sort_cipher_graph(key_schedule_instance)
         return sorted_inverted_cipher
     
-    # def correlated_key_schedule_bit_size(self):
-    #     num_round = self.number_of_rounds
-    #     key_size = self.inputs_size_to_dict()[self.inputs[0]]
-    #     key_schedule_instance = Cipher(f"{self.id}{KEY_SCHEDULE_ALGORITHM_INVERSE}", f"{self.type}", [self.inputs[0]], 
-    #                                    [self.inputs_bit_size[0]], key_size)
-
-    #     key_schedule_component = get_cipher_components(self)
-    #     corrlated_key_schedule_components=[]
-
-    #     for component in key_schedule_component:
-    #         if component.id == 'key' : 
-    #             new_component = Component(component.id, component.type, Input(component.input_bit_size, 
-    #                                                 component.input_id_links, component.input_bit_positions),
-    #                                 component.output_bit_size, component.description)
-    #             new_component.__class__ = component.__class__
-    #             setattr(new_component, "round", getattr(component, "round"))
-    #             corrlated_key_schedule_components.append(new_component)
-    #         elif (component.type == SBOX):
-    #             size = component.input_bit_size
-    #             ele = 2**size -1
-    #             # print(2^size)
-    #             new_description = [ele for _ in range(size)]
-    #             new_description[0]=0
-    #             print(new_description)
-    #             new_component = Component(component.id, component.type, Input(component.input_bit_size, 
-    #                                                 component.input_id_links, component.input_bit_positions),
-    #                                 component.output_bit_size, new_description)
-    #             new_component.__class__ = component.__class__
-    #             setattr(new_component, "round", getattr(component, "round"))
-    #             corrlated_key_schedule_components.append(new_component)
-                 
-    #         elif component.type == WORD_OPERATION and (component.description[0]=="XOR" or component.description[0]=="MODADD" or
-    #                                                    component.description[0]=="AND"):
-    #             new_description = component.description.copy()
-    #             new_description[0]="OR"
-    #             new_component = Component(component.id, component.type, Input(component.input_bit_size, 
-    #                                                 component.input_id_links, component.input_bit_positions),
-    #                                 component.output_bit_size, new_description)
-    #             new_component.__class__ = component.__class__
-    #             setattr(new_component, "round", getattr(component, "round"))
-    #             corrlated_key_schedule_components.append(new_component)
-    #         else:
-    #             new_component = Component(component.id, component.type, Input(component.input_bit_size, 
-    #                                                 component.input_id_links, component.input_bit_positions),
-    #                                 component.output_bit_size, component.description)
-    #             new_component.__class__ = component.__class__
-    #             setattr(new_component, "round", getattr(component, "round"))
-    #             corrlated_key_schedule_components.append(new_component)
-                            
-    #     # print(key_schedule_component)
-    #     for _ in range(self.number_of_rounds):
-    #         key_schedule_instance.add_round()
-    #     for component in corrlated_key_schedule_components:
-    #             if component.type == CIPHER_OUTPUT:
-    #                 if component.id == 'key':setattr(component, "round",   num_round)
-    #                 key_schedule_instance._rounds.round_at(self.number_of_rounds - 1)._components.append(component)
-    #             else:
-    #                 key_schedule_instance._rounds.round_at(self.number_of_rounds - 1 - component.round)._components.append(
-    #                 component)
-    #     sorted_inverted_cipher = sort_cipher_graph(key_schedule_instance)
-    #     return sorted_inverted_cipher
 
     def get_partial_cipher(self, start_round=None, end_round=None, keep_key_schedule=True):
 
@@ -1973,5 +1977,4 @@ class Cipher:
     def update_input_id_links_from_component_id(self, component_id, new_input_id_links):
         round_number = self.get_round_from_component_id(component_id)
         self._rounds.rounds[round_number].update_input_id_links_from_component_id(component_id, new_input_id_links)
-
 
