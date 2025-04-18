@@ -111,12 +111,12 @@ class AKI:
     sage: from claasp.ciphers.block_ciphers.aes_block_cipher import AESBlockCipher
     sage: from claasp.cipher_modules.statistical_tests.AKI import AKI
     sage: path = AKI(AESBlockCipher(number_of_rounds=2))
-    sage: target = path.computate_path_generate(the_position=127,word_size=8)
+    sage: target = path.computate_path_generate(the_position=0,word_size=8)
     sage: target
     ['K_0_0', 'K_0_5', 'K_0_10', 'K_0_15']
     sage: key_path, AKI_res = path.actual_key_information(computate_path=target,word_size=8)
     sage: AKI_res
-    5
+    4
     sage: key_path
     ['K_0_0', 'K_0_5', 'K_0_10', 'K_0_15']
 
@@ -137,8 +137,13 @@ class AKI:
         self._cipher_primitive = cipher.id + "_" + "_".join(str_of_inputs_bit_size)
         self.matrix=[]
         self.namelist = []
+        self.cipher_type = -1
+        self.ratio_of_key = -1
+        self.subkeys_order = -1
+        self.block_size = 0
+        self.key_size = 0
 
-    def computate_path_generate(self, the_position, word_size, cipher_type=1):
+    def computate_path_generate(self, the_position, word_size, subkeys_order=1, ratio_of_key=1, cipher_type=1):
         """
         According function, the differential's diffusion path in backward 
 
@@ -146,36 +151,50 @@ class AKI:
 
         ``the_position`` --- the bit that differential exist
         ``word_size`` --- the word_size of the cipher 
+        ``subkeys_order`` --- the using sequence of the subkeys section, "1" meaning "Forward", "2" meaning "Backward"
+        ``ratio_of_key`` --- the ratio between master key and subkeys
+        ``cipher_type`` --- "1" meaning normal ciphers whose size of master key is similar to the size of subkeys, 
+                            such as AES-128, KLEIN, PRESENT, Midori-128
+                        --- "2" meaning ciphers whose size of master key is more than 1.5 times the size of subkeys, 
+                            such as AES-256, AES-192, Midori-64
+                        --- "3" meaning ciphers whose size of master key is far more than the size of subkeys,
+                            such as SM4, SPECK, Simon
+    
         """
+        self.cipher_type = cipher_type
+        self.ratio_of_key = ratio_of_key
+        self.subkeys_order = subkeys_order
 
         if(self.cipher.inputs[0]=='plaintext') :
-            block_size=self.cipher.inputs_bit_size[0]
-            key_size = self.cipher.inputs_bit_size[1]
+            self.block_size=self.cipher.inputs_bit_size[0]
+            self.key_size = self.cipher.inputs_bit_size[1]
         else :
-            block_size=self.cipher.inputs_bit_size[1]
-            key_size = self.cipher.inputs_bit_size[0]
+            self.block_size=self.cipher.inputs_bit_size[1]
+            self.key_size = self.cipher.inputs_bit_size[0]
         
         KEY = [0]
-
+        
         zero_block_size = 0
-        mask = 1 << the_position
+        actual_position = self.block_size - 1 - the_position
+        mask = 1 << actual_position
         begin = zero_block_size | mask
         cipher_inv = self.cipher.cipher_inverse()
-        cipher_inv_no_ksa = cipher_inv.remove_key_schedule()
+        cipher_inv_cor = cipher_inv.correlated_cipher('inverse')
+        cipher_inv_cor_no_ksa = cipher_inv_cor.remove_key_schedule()
         cipher_output_index=0
-        for i in cipher_inv_no_ksa.inputs:
+        for i in cipher_inv_cor_no_ksa.inputs:
             if i.split('_')[0]=='cipher':
-                cipher_output_index = cipher_inv_no_ksa.inputs.index(i)
+                cipher_output_index = cipher_inv_cor_no_ksa.inputs.index(i)
                 break
         
         if (cipher_output_index==0): 
-            num_sub_key = len(cipher_inv_no_ksa.inputs)-1
-            result1=cipher_inv_no_ksa.evaluate([zero_block_size]+KEY*num_sub_key,intermediate_output=True)
-            result2=cipher_inv_no_ksa.evaluate([begin]+KEY*num_sub_key,intermediate_output=True)
+            num_sub_key = len(cipher_inv_cor_no_ksa.inputs)-1
+            result1=cipher_inv_cor_no_ksa.evaluate([zero_block_size]+KEY*num_sub_key,intermediate_output=True)
+            result2=cipher_inv_cor_no_ksa.evaluate([begin]+KEY*num_sub_key,intermediate_output=True)
         else:
-            num_sub_key = len(cipher_inv_no_ksa.inputs)-1
-            result1=cipher_inv_no_ksa.evaluate(KEY*num_sub_key+[zero_block_size],intermediate_output=True)
-            result2=cipher_inv_no_ksa.evaluate(KEY*num_sub_key+[begin],intermediate_output=True)
+            num_sub_key = len(cipher_inv_cor_no_ksa.inputs)-1
+            result1=cipher_inv_cor_no_ksa.evaluate(KEY*num_sub_key+[zero_block_size],intermediate_output=True)
+            result2=cipher_inv_cor_no_ksa.evaluate(KEY*num_sub_key+[begin],intermediate_output=True)
         xor_result = []
         
         if ('round_output' in result1[1]):
@@ -191,59 +210,121 @@ class AKI:
 
         binary_res = []
         for num in xor_result:
-            binary_res.append( format(num, '0%db' %(block_size)))
+            binary_res.append( format(num, '0%db' %(self.block_size)))
+        # print("len(binary_res):",len(binary_res))
 
         fin_result = []
         for j in range(len(binary_res)):
             for i in range(0, len(binary_res[j]), word_size):
                 if ((binary_res[j][i:i+word_size])!='0'*word_size):
+                    # if cipher_type == 1:
                     fin_result.append('K_%d_%d' %(len(binary_res)-j-1,i//word_size))
+                    # elif cipher_type == 2 and order == 1:
+                    #     skip_section = key_size//ratio_of_key
+                    #     fin_result.append('K_%d_%d' %((len(binary_res)-j-1)))
         
         return fin_result
     
-    def actual_key_information(self, computate_path, word_size):
+    def actual_key_information(self, computate_path, word_size, is_permutation = 0):
 
         KSA = self.cipher.key_schedule_algorithm()
-        key_size = self.cipher.output_bit_size
-        mask = (1<<128)-1
+        # print(self.cipher.id)
+        # key_size = self.cipher.output_bit_size
+        mask = (1<<self.key_size)-1
+        # print("key_size:",self.key_size)
+        # print("block_size:",self.block_size)
         key_path = []
 
         if computate_path == []: return [], 0
+        # print(computate_path)
+
+        permutation_box = ['0','4','8','12','1','5','9','13','2','6','10','14','3','7','11','15']
+        if is_permutation == 1:
+            new_path = []
+            for i in computate_path:
+                len_ele = len(i.split('_')[-1])
+                pos = int(i.split('_')[-1])
+                new_pos = permutation_box[pos]
+                new_ele = i[:-len_ele] + new_pos
+                new_path.append(new_ele)
+            computate_path = new_path
+        
+        # print(computate_path)
+                
 
         current_round = int(computate_path[0].split('_')[-2])
         is_the_same_in_rounds = False
         for c in computate_path:
+            # print(c)
 
             tmp_round = int(c.split('_')[-2])
             if tmp_round == 0:
                 if c not in key_path:
                     key_path.append(c)
                 continue
-            if tmp_round !=current_round: 
+            if tmp_round !=current_round and self.cipher_type==1: 
                 current_round=tmp_round
                 is_the_same_in_rounds=False
-            else:
-                is_the_same_in_rounds = True
+            elif tmp_round !=current_round and self.cipher_type==2 and (
+                (tmp_round-self.ratio_of_key+1) // self.ratio_of_key != (current_round-self.ratio_of_key+1) //self.ratio_of_key):
+                # By default, 2 XOR operations occur in round 0, so round 1 begin the KSA
+                # if (tmp_round-1) // self.ratio_of_key == (current_round-1) //self.ratio_of_key:
+                current_round = tmp_round
+                is_the_same_in_rounds = False
+                # else :
+                #     is_the_same_in_rounds = False
+            else : is_the_same_in_rounds = True
 
-            if is_the_same_in_rounds == False or c == computate_path[0]:
+            if (is_the_same_in_rounds == False or c == computate_path[0]) and self.cipher_type == 1:
+                # if self.cipher_type == 1:
+                # current_round+=1
                 KSA_reduced = KSA.reduce_key_schedule_algorithm_rounds(current_round)
+                # print(current_round)
                 KSA_inv = KSA_reduced.key_schedule_inverse()
+                # elif self.cipher_type == 2:
+                #     KSA_reduced = KSA.reduce_key_schedule_algorithm_rounds()
+            elif (is_the_same_in_rounds == False or c == computate_path[0]) and self.cipher_type == 2:
+                available_round = current_round - self.ratio_of_key + 1
+                skip_round = available_round % self.ratio_of_key
+                KSA_reduced = KSA.reduce_key_schedule_algorithm_rounds(available_round)
+
+            original_key = 0
+            if  self.cipher_type == 1:
+                
                 if word_size >1:
+                    # print(c)
+                    # print(int(c.split('_')[-1]))
                     KSA_inv_cor = KSA_inv.correlated_key_schedule('word')
+                    pos = self.key_size - int(c.split('_')[-1])*word_size-1 
+                    # print(c)
+                    # print(int(c.split('_')[-1])*word_size)
+                    # print(pos)
+                    key = (original_key | (1<<pos)) & mask
                 else:
                     KSA_inv_cor = KSA_inv.correlated_key_schedule('bit')
+                    pos = self.key_size - int(c.split('_')[-1])-1 
+                    key = (original_key | (1<<pos)) & mask
+            elif  self.cipher_type ==2 :
+                # original_key = 0
+                if word_size >1:
+                    KSA_inv_cor = KSA_inv.correlated_key_schedule('word')
+                    pos = self.key_size - 1 - int(c.split('_')[-1])*word_size - (self.ratio_of_key - skip_round - 1) * self.block_size
+                    key = (original_key | (1<<pos)) & mask
+                else:
+                    KSA_inv_cor = KSA_inv.correlated_key_schedule('bit')
+                    pos = self.key_size - 1 - int(c.split('_')[-1]) - (self.ratio_of_key - skip_round - 1) * self.block_size
+                    key = (original_key | (1<<pos)) & mask
+
+
         
         #每个compute_path的元素都加密一遍，流程还能进一步优化
-            original_key = 0 
-            if word_size >1:
-                pos = key_size - int(c.split('_')[-1])*word_size-1
-                key = (original_key | (1<<pos)) & mask
-            else :
-                pos = key_size - int(c.split('_')[-1])-1
-                key = (original_key | (1<<pos)) & mask
 
+            # print(key)
             cipher_text = KSA_inv_cor.evaluate([key])
-            binary_res=( format(cipher_text, '0%db' %(key_size)))
+            # print(cipher_text)
+            binary_res=( format(cipher_text, '0%db' %(self.key_size)))
+            # print(len(binary_res))
+            # print(binary_res)
 
             for j in range(0, len(binary_res), (word_size)):
                 if ((binary_res[j:j+word_size])!='0'*word_size):
@@ -417,7 +498,7 @@ class AKI:
                     Flag = True
                     matrix_namelist_col_swap(matrix,namelist,target_derived,partial_cols,2,i)
         
-        print(target_derived)
+        # print(target_derived)
         return target_derived, matrix,namelist,target
     
     def relation_derivation(self,target,target_derived,matrix,namelist):
