@@ -17,8 +17,10 @@ from claasp.name_mappings import *
 def get_cipher_components(self):
     # 增加代表输入的key或者plaintext的组件
     component_list = self.get_all_components()
+    # print(component_list)
     for c in component_list:
-        if c.id == 'key':
+        # print(c.id)
+        if c.id == 'key' or c.id == 'plaintext':
             setattr(c, 'round', -1)
         else:
             setattr(c, 'round', int(c.id.split("_")[-2]))
@@ -432,8 +434,9 @@ def get_all_equivalent_bits(self):
     return updated_dictio
 
 def get_equivalent_input_bit_from_output_bit(potential_unwanted_component, base_component, available_bits, all_equivalent_bits, 
-                                             key_schedule_components, self, KSA=False):
+                                             key_schedule_components, self, input_id_links_old, input_bit_positions_old, KSA=False):
     #potential_unwanted_component是base_component的输入组件
+    # print(KSA)
     if KSA == False:
         all_bit_names = get_all_bit_names(self)   #遍历所有组件，all_bit_names包含了每个组件的input_bit以及其输入组件的output_bit
     else :                                        #以及除了cipher_output组件之外的其他组件的output_updated比特
@@ -441,10 +444,26 @@ def get_equivalent_input_bit_from_output_bit(potential_unwanted_component, base_
     potential_unwanted_bits = []
     potential_unwanted_bits_names = []
     input_bit_positions_of_potential_unwanted_component = []
-    for index, input_id_link in enumerate(base_component.input_id_links):
-        if input_id_link == potential_unwanted_component.id:
-            input_bit_positions_of_potential_unwanted_component = base_component.input_bit_positions[index]
+    
 
+    if KSA == False:
+        for index, input_id_link in enumerate(base_component.input_id_links):
+            if input_id_link == potential_unwanted_component.id:
+                if input_id_link in input_id_links_old:
+                    index_old = input_id_links_old.index(input_id_link)
+                    input_positions = input_bit_positions_old[index_old]
+                    if input_positions != base_component.input_bit_positions[index]:
+                        input_bit_positions_of_potential_unwanted_component = base_component.input_bit_positions[index]
+                else:
+                    input_bit_positions_of_potential_unwanted_component = base_component.input_bit_positions[index]
+    else:
+        for index, input_id_link in enumerate(base_component.input_id_links):
+            if input_id_link == potential_unwanted_component.id:
+                input_bit_positions_of_potential_unwanted_component = base_component.input_bit_positions[index]
+
+    # print('base_component:',base_component.id)
+    # print(potential_unwanted_component.id)
+    # print(input_bit_positions_of_potential_unwanted_component)
     for i in input_bit_positions_of_potential_unwanted_component:
         output_bit = {
             "component_id": potential_unwanted_component.id,
@@ -463,7 +482,8 @@ def get_equivalent_input_bit_from_output_bit(potential_unwanted_component, base_
                     all_bit_names[equivalent_bit] in available_bits) and ( 
                     all_bit_names[equivalent_bit]["component_id"] not in key_schedule_components) and (
                     all_bit_names[equivalent_bit]["type"] == "output_updated"): # changed, line added
-               
+                
+                # print(equivalent_bit)
                 if len(equivalent_bits) == 0:
                     equivalent_bits.append(equivalent_bit)
 
@@ -474,15 +494,19 @@ def get_equivalent_input_bit_from_output_bit(potential_unwanted_component, base_
                     equivalent_bits.append(equivalent_bit)
 
     if len(equivalent_bits) == 0:
+        # print(1)
         return potential_unwanted_component.id, input_bit_positions_of_potential_unwanted_component
     elif KSA==False:
+        # print(2)
     # elif KSA==False:
         input_bit_positions = []
         for bit in equivalent_bits:
             input_bit_positions.append(all_bit_names[bit]["position"])
         input_bit_positions.sort()
+        # print(input_bit_positions)
         return all_bit_names[equivalent_bits[0]]["component_id"], input_bit_positions
     else :
+        # print(3)
         input_bit_positions = []
         input_id_links = []
         number_of_link = 0
@@ -508,6 +532,7 @@ def compute_input_id_links_and_input_bit_positions_for_inverse_component_from_in
     # if component.description[0] == "XOR": 
     #     print(component.input_id_links)
     for i in range(len(component.input_id_links)):
+        number_of_repeats = 0
         component_available = True
         bits = []
         for j in range(len(component.input_bit_positions[i])):
@@ -527,7 +552,7 @@ def compute_input_id_links_and_input_bit_positions_for_inverse_component_from_in
             potential_unwanted_component = get_component_from_id(component.input_id_links[i], self)
             equivalent_component, input_bit_positions_of_equivalent_component = get_equivalent_input_bit_from_output_bit(
                 potential_unwanted_component, component, available_bits, all_equivalent_bits, key_schedule_components,
-                self,KSA)
+                self, input_id_links,input_bit_positions, KSA)
             
             # print("equivalent_component:",equivalent_component)
             if KSA==True and isinstance(equivalent_component, list):
